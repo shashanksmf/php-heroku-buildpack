@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir>
+
+set -e
+[ -n "${HEROKU_DEBUG_BUILDPACK}" ] && set -x
+
+buildDir="${1?Missing build directory}"
+cacheDir="${2?Missing cache directory}"
+
+MY_DIR="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+BUILD_RC="$(dirname ${MY_DIR})/buildpack.rc"
+. "${BUILD_RC}"
+
+s3Bucket="${s3Bucket?Missing s3Bucket}"
+buildNumber="${buildNumber?Missing buildNumber}"
+
+echo "-----> Fetching build ${buildNumber}"
+vendorDir="${buildDir}/vendor"
+[ ! -e "${vendorDir}" ] && mkdir "${vendorDir}"
+buildFileUrl="https://s3.amazonaws.com/${s3Bucket}/builds/${buildNumber}/build.tar.gz"
+curl --silent --retry 3 --max-time 60 --location "${buildFileUrl}" | tar xz -C "${vendorDir}" --keep-old-files
+
+echo "-----> Building runtime environment"
+echo "-----  Copying buildpack configuration files"
+confDir="$(dirname ${MY_DIR})/conf/"
+cp -an "${confDir}/." "${buildDir}"
+
+appCompileTrigger="${vendorDir}/heroku/compile"
+if [ -x "${appCompileTrigger}" ]
+then
+    echo "-----  Running app compile trigger"
+    "${appCompileTrigger}" "${buildDir}" "${cacheDir}"
+else
+    echo "-----  Executable app compile trigger not found (${appCompileTrigger##${buildDir}/})"
+fi
+
+# clean the cache
+rm -rf "${cacheDir}"
